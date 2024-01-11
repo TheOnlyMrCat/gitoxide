@@ -38,6 +38,7 @@ pub(crate) struct Transaction {
     lock: Option<gix_lock::File>,
     #[allow(dead_code)] // It just has to be kept alive, hence no reads
     closed_lock: Option<gix_lock::Marker>,
+    precompose_unicode: bool,
 }
 
 /// A reference as parsed from the `packed-refs` file

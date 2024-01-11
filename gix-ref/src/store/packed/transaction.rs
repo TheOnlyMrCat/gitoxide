@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::{fmt::Formatter, io::Write};
 
 use crate::{
@@ -14,12 +15,14 @@ impl packed::Transaction {
     pub(crate) fn new_from_pack_and_lock(
         buffer: Option<file::packed::SharedBufferSnapshot>,
         lock: gix_lock::File,
+        precompose_unicode: bool,
     ) -> Self {
         packed::Transaction {
             buffer,
             edits: None,
             lock: Some(lock),
             closed_lock: None,
+            precompose_unicode,
         }
     }
 }
@@ -55,6 +58,26 @@ impl packed::Transaction {
         // Remove all edits which are deletions that aren't here in the first place
         let mut edits: Vec<Edit> = edits
             .into_iter()
+            .map(|mut edit| {
+                use gix_object::bstr::ByteSlice;
+                if self.precompose_unicode {
+                    let precomposed = edit
+                        .name
+                        .0
+                        .to_str()
+                        .ok()
+                        .map(|name| gix_utils::str::precompose(name.into()));
+                    match precomposed {
+                        None | Some(Cow::Borrowed(_)) => edit,
+                        Some(Cow::Owned(precomposed)) => {
+                            edit.name.0 = precomposed.into();
+                            edit
+                        }
+                    }
+                } else {
+                    edit
+                }
+            })
             .filter(|edit| {
                 if let Change::Delete { .. } = edit.change {
                     buffer.as_ref().map_or(true, |b| b.find(edit.name.as_ref()).is_ok())
@@ -227,6 +250,7 @@ fn write_edit(out: &mut dyn std::io::Write, edit: &Edit, lines_written: &mut i32
 pub(crate) fn buffer_into_transaction(
     buffer: file::packed::SharedBufferSnapshot,
     lock_mode: gix_lock::acquire::Fail,
+    precompose_unicode: bool,
 ) -> Result<packed::Transaction, gix_lock::acquire::Error> {
     let lock = gix_lock::File::acquire_to_update_resource(&buffer.path, lock_mode, None)?;
     Ok(packed::Transaction {
@@ -234,6 +258,7 @@ pub(crate) fn buffer_into_transaction(
         lock: Some(lock),
         closed_lock: None,
         edits: None,
+        precompose_unicode,
     })
 }
 
